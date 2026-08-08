@@ -7,6 +7,7 @@
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <SpringBoard/SpringBoard.h>
 #import <objc/runtime.h>
 
 #pragma mark - Настройки
