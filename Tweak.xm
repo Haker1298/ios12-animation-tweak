@@ -199,7 +199,7 @@ static UIView *findIconViewForApp(NSString *bundleID) {
 
         NSMutableArray *iconViews = [NSMutableArray array];
         void (^collect)(UIView *) = ^(UIView *view) {
-            if (class_isSubclassOf(object_getClass(view), objc_getClass("SBIconView"))) {
+            if ([view isKindOfClass:objc_getClass("SBIconView")]) {
                 [iconViews addObject:view];
             }
             for (UIView *sub in view.subviews) collect(sub);
@@ -280,8 +280,8 @@ static UIView *findIconViewForApp(NSString *bundleID) {
     writeLog(@"HOOK> SBApplicationIcon launch");
     NSString *bid = nil;
     @try {
-        if ([self respondsToSelector:@selector(applicationBundleID)])
-            bid = [self performSelector:@selector(applicationBundleID)];
+        if ([(id)self respondsToSelector:@selector(applicationBundleID)])
+            bid = [(id)self performSelector:@selector(applicationBundleID)];
     } @catch (NSException *e) {}
     writeLog([NSString stringWithFormat:@"  icon bid=%@", bid]);
     %orig;
