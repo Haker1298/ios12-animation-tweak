@@ -11,6 +11,9 @@
 #import <objc/runtime.h>
 #import <SpringBoard/SpringBoard.h>
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+
 #pragma mark - Логирование
 
 static NSString *logFilePath(void) {
@@ -309,14 +312,17 @@ static void hooked_sbai_launchFrom(id self, SEL _cmd, unsigned long long loc) {
 
 #pragma mark - Утилиты свизлинга
 
-static void trySwizzle(Class cls, const char *selName, IMP newImp, void **origImpPtr) {
+typedef union { void *p; IMP i; } imp_cast;
+
+static void trySwizzle(Class cls, const char *selName, IMP newImp, IMP *origImpPtr) {
     SEL sel = sel_registerName(selName);
     Method m = class_getInstanceMethod(cls, sel);
     if (!m) {
         writeLog([NSString stringWithFormat:@"  NOT FOUND: -[%s %s]", class_getName(cls), selName]);
         return;
     }
-    *origImpPtr = method_getImplementation(m);
+    imp_cast ic; ic.i = method_getImplementation(m);
+    *origImpPtr = ic.i;
     method_setImplementation(m, newImp);
     writeLog([NSString stringWithFormat:@"  SWIZZLED: -[%s %s]", class_getName(cls), selName]);
 }
@@ -375,11 +381,11 @@ static void dumpRelevantMethods(const char *className) {
     if (sbuiCls) {
         writeLog(@"SBUIController found");
         trySwizzle(sbuiCls, "activateApplication:animated:",
-                  (IMP)hooked_sbui_activateApp_anim, (void **)&orig_sbui_activateApp_anim);
+                  (IMP)hooked_sbui_activateApp_anim, &orig_sbui_activateApp_anim);
         trySwizzle(sbuiCls, "activateApplication:fromIconView:",
-                  (IMP)hooked_sbui_activate_fromIcon, (void **)&orig_sbui_activate_fromIcon);
+                  (IMP)hooked_sbui_activate_fromIcon, &orig_sbui_activate_fromIcon);
         trySwizzle(sbuiCls, "openApplication:",
-                  (IMP)hooked_sbui_openApp, (void **)&orig_sbui_openApp);
+                  (IMP)hooked_sbui_openApp, &orig_sbui_openApp);
     } else {
         writeLog(@"SBUIController NOT FOUND!");
     }
@@ -389,12 +395,14 @@ static void dumpRelevantMethods(const char *className) {
     if (sbaiCls) {
         writeLog(@"SBApplicationIcon found");
         trySwizzle(sbaiCls, "launch",
-                  (IMP)hooked_sbai_launch, (void **)&orig_sbai_launch);
+                  (IMP)hooked_sbai_launch, &orig_sbai_launch);
         trySwizzle(sbaiCls, "launchFromLocation:",
-                  (IMP)hooked_sbai_launchFrom, (void **)&orig_sbai_launchFrom);
+                  (IMP)hooked_sbai_launchFrom, &orig_sbai_launchFrom);
     } else {
         writeLog(@"SBApplicationIcon NOT FOUND!");
     }
 
     writeLog(@"=== iOS12Anim v6 READY ===");
 }
+
+#pragma clang diagnostic pop
