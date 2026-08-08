@@ -60,7 +60,7 @@ jobs:
 
       - name: Build
         run: |
-          export PATH=$THEOS/toolchain/linux/iphone/bin:$PATH
+          export PATH=$THEOS/bin:$THEOS/toolchain/linux/iphone/bin:$PATH
           make clean 2>/dev/null || true
           make package 2>&1 | tee ../build-tgfix.log
 
