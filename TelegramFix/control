@@ -1,0 +1,10 @@
+Package: com.haker1928.telegramfix
+Name: Telegram Fix for iOS 9
+Depends: mobilesubstrate, firmware (>= 9.0)
+Description: Fixes the no-internet issue in Telegram on iOS 9 by bypassing SSL certificate validation.
+Maintainer: Haker1928
+Author: Haker1928
+Section: Tweaks
+Architecture: iphoneos-arm
+Version: 1.0.0
+Installed-Size: 100
