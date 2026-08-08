@@ -7,7 +7,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = iOS12Animation
 
 iOS12Animation_FILES = Tweak.xm
-iOS12Animation_CFLAGS = -fobjc-arc -Wno-unused-function
+iOS12Animation_CFLAGS = -fobjc-arc -Wno-unused-function -Wno-arc-performSelector-leaks
 iOS12Animation_FRAMEWORKS = UIKit QuartzCore CoreGraphics
 iOS12Animation_PRIVATE_FRAMEWORKS = SpringBoard
 
