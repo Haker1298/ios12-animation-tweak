@@ -21,7 +21,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/theos
-          key: theos-v2
+          key: theos-ubuntu-v7
 
       - name: Install dependencies
         run: |
@@ -39,18 +39,24 @@ jobs:
       - name: Install iOS SDK
         run: |
           mkdir -p $THEOS/sdks
-          curl -LO https://github.com/theos/sdks/archive/master.zip
-          unzip -q master.zip
-          cp -rn sdks-master/*.sdk $THEOS/sdks/ 2>/dev/null || true
-          rm -rf sdks-master master.zip
+          if ls $THEOS/sdks/*.sdk 1>/dev/null 2>&1; then
+            echo "SDKs already installed from cache"
+          else
+            curl -LO https://github.com/theos/sdks/archive/master.zip
+            unzip -q master.zip
+            cp -rn sdks-master/*.sdk $THEOS/sdks/ 2>/dev/null || true
+            rm -rf sdks-master master.zip
+          fi
           ls $THEOS/sdks/
 
-      - name: Install iOS Toolchain
+      - name: Ensure iOS Toolchain
         run: |
-          curl -LO https://github.com/theos/toolchain/releases/latest/download/linux-iphone-toolchain.tar.lzma
-          mkdir -p $THEOS/toolchain/linux/iphone
-          tar --lzma -xf linux-iphone-toolchain.tar.lzma -C $THEOS/toolchain/linux/iphone
-          rm -f linux-iphone-toolchain.tar.lzma
+          if [ -d "$THEOS/toolchain/linux/iphone/bin" ]; then
+            echo "Toolchain found in cache"
+          else
+            echo "Toolchain NOT in cache, attempting download..."
+            curl -fSL -o /tmp/tc.tar.lzma 'https://github.com/theos/toolchain/releases/latest/download/linux-iphone-toolchain.tar.lzma' 2>/dev/null &&             mkdir -p $THEOS/toolchain/linux/iphone &&             tar --lzma -xf /tmp/tc.tar.lzma -C $THEOS/toolchain/linux/iphone &&             rm -f /tmp/tc.tar.lzma &&             echo "Toolchain installed" || echo "WARNING: Toolchain download failed, relying on cache"
+          fi
 
       - name: Build
         run: |
