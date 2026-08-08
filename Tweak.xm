@@ -84,7 +84,7 @@ static void dumpClassMethods(const char *className) {
 static void doZoomAnimation(CGRect fromFrame) {
     if (_animating) return;
     _animating = YES;
-    writeLog([NSString stringWithFormat:@"ANIMATING from %@", NSStringFromCGRect(fromFrame)]]);
+    writeLog([NSString stringWithFormat:@"ANIMATING from %@", NSStringFromCGRect(fromFrame)]);
 
     dispatch_async(dispatch_get_main_queue(), ^{
         CGRect screenBounds = [UIScreen mainScreen].bounds;
@@ -187,7 +187,7 @@ static void doZoomAnimation(CGRect fromFrame) {
         NULL, CFNotificationSuspensionBehaviorCoalesce);
 
     // === ДИАГНОСТИКА ===
-    ["" writeToFile:logPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
+    [@"" writeToFile:logPath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
     writeLog(@"=== iOS 12 Animation v5 DIAGNOSTIC ===");
     writeLog([NSString stringWithFormat:@"Enabled: %d, Duration: %.2f, Style: %ld", _enabled, _duration, (long)_style]);
     writeLog(@"--- Checking classes ---");
