@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential clang lld llvm \
-            curl unzip fakeroot libtinfo5 libz3-dev \
+            curl unzip fakeroot libtinfo6 libz3-dev \
             rsync git perl
 
       - name: Cache Theos
