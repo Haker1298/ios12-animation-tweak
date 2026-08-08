@@ -1,29 +1,32 @@
 /*
- * iOS 12 Animation — Анимация открытия приложений в стиле iOS 12+
- * Для iOS 9 | Автор: Haker1928
+ * iOS 12 Animation v4 — Анимация открытия в стиле iOS 12+
+ * iOS 9 | Haker1928
+ *
+ * Подход: перехватываем переход приложения через SBApplication
+ * и заменяем стоковую анимацию на spring-zoom через UIWindow
  */
 
 %config(Generator=MobileSubstrate)
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
-#import <SpringBoard/SpringBoard.h>
 #import <objc/runtime.h>
 
 #pragma mark - Настройки
 
-static NSString *const kDomain = @"com.haker1928.ios12animation";
 static BOOL _enabled = YES;
 static CGFloat _duration = 0.5;
 static NSInteger _style = 0;
+static BOOL _animating = NO;
 
 static void loadPrefs(void) {
-    NSUserDefaults *u = [[NSUserDefaults alloc] initWithSuiteName:kDomain];
-    if (!u) return;
-    [u synchronize];
-    if ([u objectForKey:@"Enabled"]) _enabled = [u boolForKey:@"Enabled"];
-    if ([u objectForKey:@"Duration"]) _duration = [u floatForKey:@"Duration"];
-    if ([u objectForKey:@"AnimationStyle"]) _style = [u integerForKey:@"AnimationStyle"];
+    NSDictionary *d = [NSDictionary dictionaryWithContentsOfFile:
+        @"/var/mobile/Library/Preferences/com.haker1928.ios12animation.plist"];
+    if (d) {
+        if (d[@"Enabled"]) _enabled = [d[@"Enabled"] boolValue];
+        if (d[@"Duration"]) _duration = [d[@"Duration"] floatValue];
+        if (d[@"AnimationStyle"]) _style = [d[@"AnimationStyle"] integerValue];
+    }
 }
 
 static void prefsChanged(CFNotificationCenterRef c, void *o,
@@ -33,133 +36,189 @@ static void prefsChanged(CFNotificationCenterRef c, void *o,
 
 #pragma mark - Поиск иконки
 
-static UIView *searchIcon(UIView *view, NSString *bid) {
-    if (!view) return nil;
-    // Проверяем, является ли этот view SBIconView с нужным bundleID
-    if ([NSStringFromClass([view class]) containsString:@"IconView"]) {
+static UIView *findIconRecursive(UIView *v, NSString *bid) {
+    if (!v) return nil;
+    if ([NSStringFromClass([v class]) rangeOfString:@"IconView"].location != NSNotFound) {
         @try {
-            id icon = [view valueForKey:@"icon"];
+            id icon = [v valueForKey:@"icon"];
             if (icon) {
-                NSString *thisBid = [icon valueForKey:@"applicationBundleID"];
-                if ([thisBid isEqualToString:bid]) return view;
+                NSString *b = [icon valueForKey:@"applicationBundleID"];
+                if ([b isEqualToString:bid]) return v;
             }
         } @catch(NSException *e) {}
     }
-    // Рекурсия по subviews
-    for (UIView *sub in view.subviews) {
-        UIView *found = searchIcon(sub, bid);
-        if (found) return found;
+    for (UIView *sub in [v subviews]) {
+        UIView *r = findIconRecursive(sub, bid);
+        if (r) return r;
     }
     return nil;
 }
 
-#pragma mark - Анимация
+#pragma mark - Анимация (UIWindow overlay)
 
-static void doAnimation(CGRect fromFrame) {
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.03 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        UIWindow *win = [UIApplication sharedApplication].keyWindow;
-        if (!win) {
-            for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
-                if (!w.hidden && w.alpha > 0) { win = w; break; }
-            }
-        }
-        if (!win) return;
+static void doZoomAnimation(CGRect fromFrame) {
+    if (_animating) return;
+    _animating = YES;
 
-        CGRect screen = win.bounds;
+    dispatch_async(dispatch_get_main_queue(), ^{
+        CGRect screenBounds = [UIScreen mainScreen].bounds;
 
-        // Фон
+        // === Отдельное UIWindow поверх ВСЕГО ===
+        UIWindow *overlay = [[UIWindow alloc] initWithFrame:screenBounds];
+        overlay.windowLevel = UIWindowLevelStatusBar + 500;
+        overlay.backgroundColor = [UIColor clearColor];
+        overlay.alpha = 1.0;
+
+        // rootViewController ОБЯЗАТЕЛЕН на iOS 8+
+        UIViewController *vc = [[UIViewController alloc] init];
+        vc.view.backgroundColor = [UIColor clearColor];
+        vc.view.userInteractionEnabled = NO;
+        overlay.rootViewController = vc;
+        overlay.hidden = NO;
+
+        // --- Фон (blur или dim) ---
         UIView *bg = nil;
         if (_style == 1) {
-            UIVisualEffectView *b = [[UIVisualEffectView alloc]
+            UIVisualEffectView *blur = [[UIVisualEffectView alloc]
                 initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleLight]];
-            b.frame = screen; b.alpha = 0; b.tag = 88991;
-            [win addSubview:b]; bg = b;
+            blur.frame = screenBounds;
+            blur.alpha = 0;
+            [vc.view addSubview:blur];
+            bg = blur;
         } else if (_style == 2) {
-            UIView *d = [[UIView alloc] initWithFrame:screen];
-            d.backgroundColor = [UIColor blackColor]; d.alpha = 0; d.tag = 88991;
-            [win addSubview:d]; bg = d;
+            UIView *dim = [[UIView alloc] initWithFrame:screenBounds];
+            dim.backgroundColor = [UIColor blackColor];
+            dim.alpha = 0;
+            [vc.view addSubview:dim];
+            bg = dim;
         }
 
-        // Карточка
+        // --- Карточка ---
         UIView *card = [[UIView alloc] initWithFrame:fromFrame];
         card.backgroundColor = [UIColor whiteColor];
         card.layer.cornerRadius = 12.5;
         card.layer.masksToBounds = YES;
-        card.tag = 88992;
-        [win addSubview:card];
+        card.layer.zPosition = 999;
+        [vc.view addSubview:card];
 
-        // Zoom
+        // === Фаза 1: Spring zoom до полного экрана ===
         [UIView animateWithDuration:_duration
                               delay:0
-             usingSpringWithDamping:0.85
-              initialSpringVelocity:0.5
-                            options:0
+             usingSpringWithDamping:0.82
+              initialSpringVelocity:0.6
+                            options:UIViewAnimationOptionCurveEaseOut
                          animations:^{
-            if (bg) bg.alpha = 0.3;
-            card.frame = screen;
+            if (bg) bg.alpha = 0.35;
+            card.frame = screenBounds;
             card.layer.cornerRadius = 0;
-        } completion:^(BOOL finished) {
-            [UIView animateWithDuration:0.15 animations:^{
-                card.alpha = 0;
-                if (bg) bg.alpha = 0;
-            } completion:^(BOOL finished) {
-                [card removeFromSuperview];
-                [bg removeFromSuperview];
+        }
+                         completion:^(BOOL finished) {
+            // === Фаза 2: Плавное растворение ===
+            [UIView animateWithDuration:0.2
+                                  delay:0
+                                options:UIViewAnimationOptionCurveEaseIn
+                             animations:^{
+                overlay.alpha = 0;
+            }
+                             completion:^(BOOL finished) {
+                overlay.hidden = YES;
+                overlay.rootViewController = nil;
+                _animating = NO;
             }];
         }];
     });
 }
 
-#pragma mark - Хук: единственная точка входа
+#pragma mark - Хук 1: SBApplicationIcon (все возможные методы запуска)
 
 %hook SBApplicationIcon
 
 - (void)launch {
-    if (_enabled) {
-        CGRect frame = CGRectZero;
+    NSLog(@"[iOS12Anim] SBApplicationIcon -launch called");
+    if (_enabled && !_animating) {
         NSString *bid = nil;
+        @try { bid = [(id)self valueForKey:@"applicationBundleID"]; } @catch(NSException *e) {}
+        NSLog(@"[iOS12Anim] bid=%@", bid);
 
-        @try {
-            bid = [(id)self valueForKey:@"applicationBundleID"];
-        } @catch(NSException *e) {}
-
+        CGRect frame = CGRectZero;
         if (bid) {
-            // Ищем иконку в иерархии SpringBoard
             for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
                 if (w.hidden) continue;
-                UIView *iv = searchIcon(w, bid);
+                UIView *iv = findIconRecursive(w, bid);
                 if (iv && iv.window) {
                     frame = [iv convertRect:iv.bounds toView:nil];
                     break;
                 }
             }
         }
-
-        // Фоллбэк: анимация из нижней части экрана
         if (CGRectIsEmpty(frame)) {
-            UIWindow *w = [UIApplication sharedApplication].keyWindow;
-            if (w) {
-                CGFloat s = 60;
-                frame = CGRectMake(
-                    CGRectGetMidX(w.bounds) - s/2,
-                    CGRectGetMaxY(w.bounds) - 140,
-                    s, s
-                );
+            CGFloat s = 60;
+            CGRect sb = [UIScreen mainScreen].bounds;
+            frame = CGRectMake(CGRectGetMidX(sb)-s/2, CGRectGetMaxY(sb)-140, s, s);
+        }
+        doZoomAnimation(frame);
+    }
+    %orig;
+}
+
+- (void)activate {
+    NSLog(@"[iOS12Anim] SBApplicationIcon -activate called");
+    if (_enabled && !_animating) {
+        CGFloat s = 60;
+        CGRect sb = [UIScreen mainScreen].bounds;
+        doZoomAnimation(CGRectMake(CGRectGetMidX(sb)-s/2, CGRectGetMaxY(sb)-140, s, s));
+    }
+    %orig;
+}
+
+- (void)launchFromLocation:(unsigned long long)loc {
+    NSLog(@"[iOS12Anim] SBApplicationIcon -launchFromLocation called");
+    if (_enabled && !_animating) {
+        NSString *bid = nil;
+        @try { bid = [(id)self valueForKey:@"applicationBundleID"]; } @catch(NSException *e) {}
+        CGRect frame = CGRectZero;
+        if (bid) {
+            for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
+                if (w.hidden) continue;
+                UIView *iv = findIconRecursive(w, bid);
+                if (iv && iv.window) {
+                    frame = [iv convertRect:iv.bounds toView:nil];
+                    break;
+                }
             }
         }
-
-        NSLog(@"[iOS12Anim] launch %@ frame=%@", bid, NSStringFromCGRect(frame));
-        doAnimation(frame);
+        if (CGRectIsEmpty(frame)) {
+            CGFloat s = 60;
+            CGRect sb = [UIScreen mainScreen].bounds;
+            frame = CGRectMake(CGRectGetMidX(sb)-s/2, CGRectGetMaxY(sb)-140, s, s);
+        }
+        doZoomAnimation(frame);
     }
     %orig;
 }
 
 %end
 
-#pragma mark - Init
+#pragma mark - Хук 2: SBIcon (базовый класс, фоллбэк)
+
+%hook SBIcon
+
+- (void)launch {
+    NSLog(@"[iOS12Anim] SBIcon -launch called");
+    if (_enabled && !_animating) {
+        CGFloat s = 60;
+        CGRect sb = [UIScreen mainScreen].bounds;
+        doZoomAnimation(CGRectMake(CGRectGetMidX(sb)-s/2, CGRectGetMaxY(sb)-140, s, s));
+    }
+    %orig;
+}
+
+%end
+
+#pragma mark - Хук 3: SpringBoard
 
 %hook SpringBoard
+
 - (void)applicationDidFinishLaunching:(id)app {
     %orig;
     loadPrefs();
@@ -169,9 +228,12 @@ static void doAnimation(CGRect fromFrame) {
         CFSTR("com.haker1928.ios12animation/settingschanged"),
         NULL, CFNotificationSuspensionBehaviorCoalesce
     );
-    NSLog(@"[iOS12Anim] v3 loaded | Haker1928");
+    NSLog(@"[iOS12Anim] v4 loaded | Haker1928 | enabled=%d", _enabled);
 }
+
 %end
+
+#pragma mark - Constructor
 
 %ctor {
     loadPrefs();
@@ -181,5 +243,7 @@ static void doAnimation(CGRect fromFrame) {
         CFSTR("com.haker1928.ios12animation/settingschanged"),
         NULL, CFNotificationSuspensionBehaviorCoalesce
     );
-    NSLog(@"[iOS12Anim] ctor");
+    NSLog(@"[iOS12Anim] ctor | classes: SBApplicationIcon=%d SBIcon=%d",
+        objc_getClass("SBApplicationIcon") != nil,
+        objc_getClass("SBIcon") != nil);
 }
