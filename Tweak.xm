@@ -1,255 +1,241 @@
 /*
- * iOS 12 Animation Tweak for iOS 9
- * Добавляет анимацию открытия приложений в стиле iOS 12+
- * Иконка плавно увеличивается из своей позиции на SpringBoard
+ * iOS 12 Animation — Анимация открытия приложений в стиле iOS 12+
+ * Для джейлбрейкнутых устройств на iOS 9
+ * Автор: Haker1928
  */
+
+%config(Generator=MobileSubstrate)
 
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <SpringBoard/SpringBoard.h>
 #import <objc/runtime.h>
 
-// ===== Настройки по умолчанию =====
+#pragma mark - Конфигурация
+
+static NSString *const kPrefsDomain = @"com.haker1928.ios12animation";
+static NSString *const kSettingsChanged = @"com.haker1928.ios12animation/settingschanged";
+
 static BOOL _enabled = YES;
-static CGFloat _duration = 0.55;
-static CGFloat _dampingRatio = 0.86;
-static CGFloat _initialVelocity = 0.0;
-static NSInteger _animationStyle = 0; // 0 = zoom, 1 = zoom+blur, 2 = zoom+fade
+static CGFloat _duration = 0.5;
+static NSInteger _style = 0;
 
-// ===== Хранилище данных иконки =====
-static CGRect _capturedIconFrame = CGRectZero;
-static UIImage *_capturedIconSnapshot = nil;
-static NSString *_capturedBundleID = nil;
-static BOOL _isAnimating = NO;
+#pragma mark - Хранилище
 
-// ===== Загрузка настроек =====
+static CGRect _iconFrame = CGRectZero;
+static UIView *_capturedIconView = nil;
+static BOOL _pendingLaunch = NO;
+
+#pragma mark - Настройки
+
 static void reloadSettings() {
     NSDictionary *prefs = [NSDictionary dictionaryWithContentsOfFile:
-        @"/var/mobile/Library/Preferences/com.yourname.ios12animation.plist"];
+        [NSString stringWithFormat:@"/var/mobile/Library/Preferences/%@.plist", kPrefsDomain]];
     if (prefs) {
-        _enabled = [prefs[@"Enabled"] boolValue];
-        if (!prefs[@"Enabled"]) _enabled = YES;
-        _duration = [prefs[@"Duration"] floatValue];
-        if (_duration <= 0.0) _duration = 0.55;
-        _dampingRatio = [prefs[@"DampingRatio"] floatValue];
-        if (_dampingRatio <= 0.0) _dampingRatio = 0.86;
-        _initialVelocity = [prefs[@"InitialVelocity"] floatValue];
-        _animationStyle = [prefs[@"AnimationStyle"] integerValue];
+        if (prefs[@"Enabled"]) _enabled = [prefs[@"Enabled"] boolValue];
+        if (prefs[@"Duration"]) _duration = [prefs[@"Duration"] floatValue];
+        if (prefs[@"AnimationStyle"]) _style = [prefs[@"AnimationStyle"] integerValue];
     }
+    _pendingLaunch = NO;
 }
 
-// ===== Класс оверлейного окна анимации =====
-@interface IOS12AnimWindow : UIWindow
-@property (nonatomic, strong) UIView *zoomView;
-@property (nonatomic, strong) UIVisualEffectView *blurView;
-@property (nonatomic, strong) UIImageView *iconImageView;
-@property (nonatomic, strong) UIView *whiteCard;
-@end
-
-@implementation IOS12AnimWindow
-
-- (instancetype)initWithIconFrame:(CGRect)iconFrame snapshot:(UIImage *)snapshot {
-    self = [super initWithFrame:[UIScreen mainScreen].bounds];
-    if (self) {
-        self.windowLevel = UIWindowLevelStatusBar + 200;
-        self.backgroundColor = [UIColor clearColor];
-        self.hidden = NO;
-        self.alpha = 1.0;
-        
-        // --- Размытие фона (для стиля blur) ---
-        if (_animationStyle >= 1) {
-            UIBlurEffect *blurEffect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleLight];
-            self.blurView = [[UIVisualEffectView alloc] initWithEffect:blurEffect];
-            self.blurView.frame = self.bounds;
-            self.blurView.alpha = 0.0;
-            [self addSubview:self.blurView];
-        }
-        
-        // --- Белая карточка (имитация экрана приложения) ---
-        self.whiteCard = [[UIView alloc] initWithFrame:iconFrame];
-        self.whiteCard.backgroundColor = [UIColor whiteColor];
-        self.whiteCard.layer.cornerRadius = 13.0; // Скругление иконки
-        self.whiteCard.layer.masksToBounds = YES;
-        self.whiteCard.layer.shadowColor = [UIColor blackColor].CGColor;
-        self.whiteCard.layer.shadowOffset = CGSizeMake(0, 4);
-        self.whiteCard.layer.shadowOpacity = 0.15;
-        self.whiteCard.layer.shadowRadius = 12.0;
-        [self addSubview:self.whiteCard];
-        
-        // --- Изображение иконки поверх карточки ---
-        if (snapshot) {
-            self.iconImageView = [[UIImageView alloc] initWithImage:snapshot];
-            self.iconImageView.frame = self.whiteCard.bounds;
-            self.iconImageView.contentMode = UIViewContentModeScaleAspectFill;
-            self.iconImageView.clipsToBounds = YES;
-            [self.whiteCard addSubview:self.iconImageView];
-        }
-    }
-    return self;
+static void onSettingsChanged(CFNotificationCenterRef center, void *observer,
+                                CFStringRef name, const void *object, CFDictionaryRef userInfo) {
+    reloadSettings();
 }
 
-- (void)performAnimationWithCompletion:(void(^)(void))completion {
-    if (_isAnimating) {
-        if (completion) completion();
+#pragma mark - Анимация
+
+static void performZoomAnimation(void) {
+    if (!_enabled || CGRectIsEmpty(_iconFrame)) {
+        _iconFrame = CGRectZero;
+        _capturedIconView = nil;
         return;
     }
-    _isAnimating = YES;
-    
-    CGRect screenBounds = [UIScreen mainScreen].bounds;
-    
-    // --- Фаза 1: Увеличение иконки до полного экрана (Spring Animation) ---
-    [UIView animateWithDuration:_duration
-                          delay:0.02
-         usingSpringWithDamping:_dampingRatio
-          initialSpringVelocity:_initialVelocity
-                        options:UIViewAnimationOptionCurveEaseOut | UIViewAnimationOptionAllowAnimatedContent
-                     animations:^{
-        // Размытие фона
-        if (self.blurView) {
-            self.blurView.alpha = 0.25;
+
+    CGRect startFrame = _iconFrame;
+    _iconFrame = CGRectZero;
+
+    dispatch_async(dispatch_get_main_queue(), ^{
+        UIWindow *sbWindow = nil;
+
+        // Ищем окно SpringBoard
+        for (UIWindow *w in [[UIApplication sharedApplication] windows]) {
+            if (!w.hidden && w != [UIApplication sharedApplication].keyWindow) {
+                sbWindow = w;
+                break;
+            }
         }
-        
-        // Карточка увеличивается до полного экрана
-        self.whiteCard.frame = screenBounds;
-        self.whiteCard.layer.cornerRadius = 0.0;
-        self.whiteCard.layer.shadowOpacity = 0.0;
-        
-        // Иконка тоже масштабируется
-        self.iconImageView.frame = screenBounds;
-    }
-                     completion:^(BOOL finished) {
-        // --- Фаза 2: Плавное исчезновение оверлея ---
-        [UIView animateWithDuration:0.18
-                              delay:0.0
-                            options:UIViewAnimationOptionCurveEaseIn
+        if (!sbWindow) {
+            sbWindow = [UIApplication sharedApplication].keyWindow;
+        }
+        if (!sbWindow) return;
+
+        CGRect screenBounds = sbWindow.bounds;
+
+        // --- Белая карточка (имитация экрана приложения) ---
+        UIView *card = [[UIView alloc] initWithFrame:startFrame];
+        card.backgroundColor = [UIColor whiteColor];
+        card.layer.cornerRadius = 12.5;
+        card.layer.masksToBounds = YES;
+        card.layer.zPosition = 9999;
+        [sbWindow addSubview:card];
+
+        // --- Добавляем снапшот иконки на карточку ---
+        if (_capturedIconView) {
+            UIGraphicsBeginImageContextWithOptions(startFrame.size, NO, 0);
+            [_capturedIconView.layer renderInContext:UIGraphicsGetCurrentContext()];
+            UIImage *snapshot = UIGraphicsGetImageFromCurrentImageContext();
+            UIGraphicsEndImageContext();
+
+            if (snapshot) {
+                UIImageView *imgView = [[UIImageView alloc] initWithImage:snapshot];
+                imgView.frame = card.bounds;
+                imgView.contentMode = UIViewContentModeScaleToFill;
+                imgView.clipsToBounds = YES;
+                [card addSubview:imgView];
+            }
+        }
+        _capturedIconView = nil;
+
+        // --- Размытие фона (для стиля blur) ---
+        UIView *dimView = nil;
+        if (_style == 1) {
+            UIVisualEffectView *blur = [[UIVisualEffectView alloc]
+                initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleLight]];
+            blur.frame = screenBounds;
+            blur.alpha = 0;
+            blur.layer.zPosition = 9998;
+            [sbWindow insertSubview:blur belowSubview:card];
+            dimView = blur;
+        } else if (_style == 2) {
+            UIView *dim = [[UIView alloc] initWithFrame:screenBounds];
+            dim.backgroundColor = [UIColor blackColor];
+            dim.alpha = 0;
+            dim.layer.zPosition = 9998;
+            [sbWindow insertSubview:dim belowSubview:card];
+            dimView = dim;
+        }
+
+        // --- Фаза 1: Spring Zoom ---
+        CGFloat dur = _duration;
+        [UIView animateWithDuration:dur
+                              delay:0.02
+             usingSpringWithDamping:0.85
+              initialSpringVelocity:0.5
+                            options:UIViewAnimationOptionAllowAnimatedContent
                          animations:^{
-            self.alpha = 0.0;
+            if (dimView) dimView.alpha = 0.3;
+            card.frame = screenBounds;
+            card.layer.cornerRadius = 0;
         }
                          completion:^(BOOL finished) {
-            [self removeFromSuperview];
-            _isAnimating = NO;
-            if (completion) completion();
+            // --- Фаза 2: Плавное исчезновение ---
+            [UIView animateWithDuration:0.15 delay:0 options:UIViewAnimationOptionCurveEaseIn
+                             animations:^{
+                card.alpha = 0;
+                if (dimView) dimView.alpha = 0;
+            } completion:^(BOOL finished) {
+                [card removeFromSuperview];
+                [dimView removeFromSuperview];
+            }];
         }];
-    }];
+    });
 }
 
-@end
-
-#pragma mark - Хук SBIconView (захват позиции иконки)
+#pragma mark - Хук SBIconView (захват позиции)
 
 %hook SBIconView
 
-// Перехватываем касание иконки для захвата её позиции и снапшота
-- (void)_handleIconTap:(id)tap {
+- (void)touchesEnded:(NSSet *)touches withEvent:(UIEvent *)event {
     @try {
-        UIView *iconView = (UIView *)self;
-        if (iconView && iconView.window) {
-            // Получаем позицию иконки относительно экрана
-            _capturedIconFrame = [iconView convertRect:iconView.bounds 
-                                               toView:iconView.window];
-            
-            // Создаём снапшот иконки
-            _capturedIconSnapshot = nil; // Сбрасываем
-            UIGraphicsBeginImageContextWithOptions(iconView.bounds.size, NO, [UIScreen mainScreen].scale);
-            [iconView.layer renderInContext:UIGraphicsGetCurrentContext()];
-            _capturedIconSnapshot = UIGraphicsGetImageFromCurrentImageContext();
-            UIGraphicsEndImageContext();
+        UIView *selfView = (UIView *)self;
+        if (selfView.window) {
+            _iconFrame = [selfView convertRect:selfView.bounds toView:nil];
+            _capturedIconView = selfView;
+            _pendingLaunch = YES;
         }
     } @catch (NSException *e) {
-        NSLog(@"[iOS12Animation] Error capturing icon: %@", e);
+        NSLog(@"[iOS12Anim] touchesEnded error: %@", e);
     }
-    
     %orig;
 }
 
-// Дополнительный хук для совместимости с разными версиями iOS 9
-- (void)iconTapped:(id)arg1 {
-    @try {
-        UIView *iconView = (UIView *)self;
-        if (iconView && iconView.window) {
-            _capturedIconFrame = [iconView convertRect:iconView.bounds 
-                                               toView:iconView.window];
-            
-            UIGraphicsBeginImageContextWithOptions(iconView.bounds.size, NO, [UIScreen mainScreen].scale);
-            [iconView.layer renderInContext:UIGraphicsGetCurrentContext()];
-            _capturedIconSnapshot = UIGraphicsGetImageFromCurrentImageContext();
-            UIGraphicsEndImageContext();
-        }
-    } @catch (NSException *e) {
-        NSLog(@"[iOS12Animation] Error in iconTapped: %@", e);
-    }
-    
+- (void)touchesCancelled:(NSSet *)touches withEvent:(UIEvent *)event {
+    _iconFrame = CGRectZero;
+    _capturedIconView = nil;
+    _pendingLaunch = NO;
     %orig;
 }
 
 %end
 
-#pragma mark - Хук SBApplicationIcon (запуск анимации)
+#pragma mark - Хук SBIconController (запуск анимации)
+
+%hook SBIconController
+
+- (void)openApplication:(id)application fromIconView:(id)iconView {
+    // Защитный захват позиции прямо из iconView
+    if (iconView && !_pendingLaunch) {
+        @try {
+            UIView *v = (UIView *)iconView;
+            if (v.window) {
+                _iconFrame = [v convertRect:v.bounds toView:nil];
+                _capturedIconView = v;
+            }
+        } @catch (NSException *e) {}
+    }
+
+    // Запускаем анимацию
+    if (_enabled && !CGRectIsEmpty(_iconFrame)) {
+        performZoomAnimation();
+    }
+
+    %orig;
+}
+
+%end
+
+#pragma mark - Хук SBApplicationIcon (запуск + фоллбэк)
 
 %hook SBApplicationIcon
 
 - (void)launch {
-    // Запускаем анимацию перед открытием приложения
-    if (_enabled && !CGRectIsEmpty(_capturedIconFrame)) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-            IOS12AnimWindow *animWindow = [[IOS12AnimWindow alloc]
-                initWithIconFrame:_capturedIconFrame
-                          snapshot:_capturedIconSnapshot];
-            
-            // Устанавливаем rootViewController для корректного отображения
-            animWindow.rootViewController = [[UIViewController alloc] init];
-            animWindow.rootViewController.view.backgroundColor = [UIColor clearColor];
-            animWindow.rootViewController.view.userInteractionEnabled = NO;
-            
-            [animWindow performAnimationWithCompletion:^{
-                // Сбрасываем захваченные данные
-                _capturedIconFrame = CGRectZero;
-                _capturedIconSnapshot = nil;
-            }];
-        });
+    // Фоллбэк: если SBIconController не сработал, пробуем здесь
+    if (_enabled && _pendingLaunch && !CGRectIsEmpty(_iconFrame)) {
+        performZoomAnimation();
     }
-    
+    _pendingLaunch = NO;
     %orig;
 }
 
 %end
 
-#pragma mark - Хук SpringBoard (инициализация)
+#pragma mark - Инициализация
 
 %hook SpringBoard
 
 - (void)applicationDidFinishLaunching:(id)application {
     %orig;
     reloadSettings();
-    
-    // Слушаем изменения настроек
     CFNotificationCenterAddObserver(
         CFNotificationCenterGetDarwinNotifyCenter(),
-        NULL,
-        (CFNotificationCallback)reloadSettings,
-        CFSTR("com.yourname.ios12animation/settingschanged"),
-        NULL,
-        CFNotificationSuspensionBehaviorCoalesce
+        NULL, onSettingsChanged,
+        (__bridge CFStringRef)kSettingsChanged,
+        NULL, CFNotificationSuspensionBehaviorCoalesce
     );
-    
-    NSLog(@"[iOS12Animation] Tweak loaded successfully! iOS 9 style -> iOS 12+ animation.");
+    NSLog(@"[iOS12Anim] Загружен! Автор: Haker1928");
 }
 
 %end
 
-#pragma mark - Constructor
-
 %ctor {
-    // Регистрируем слушатель настроек при загрузке твика
+    reloadSettings();
     CFNotificationCenterAddObserver(
         CFNotificationCenterGetDarwinNotifyCenter(),
-        NULL,
-        (CFNotificationCallback)reloadSettings,
-        CFSTR("com.yourname.ios12animation/settingschanged"),
-        NULL,
-        CFNotificationSuspensionBehaviorCoalesce
+        NULL, onSettingsChanged,
+        (__bridge CFStringRef)kSettingsChanged,
+        NULL, CFNotificationSuspensionBehaviorCoalesce
     );
-    
-    reloadSettings();
-    NSLog(@"[iOS12Animation] Constructor called, tweak initialized.");
+    NSLog(@"[iOS12Anim] ctor loaded");
 }
