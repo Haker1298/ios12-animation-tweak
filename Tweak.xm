@@ -1,5 +1,5 @@
 /**
- * iOS 12 Animation v6 — Runtime Swizzle + Animation
+ * iOS 12 Animation v7 — Logos hooks + runtime diagnostics
  * iOS 9 | Haker1928
  * Лог: /var/mobile/Library/Logs/iOS12Anim.log
  */
@@ -10,9 +10,6 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/runtime.h>
 #import <SpringBoard/SpringBoard.h>
-
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
 
 #pragma mark - Логирование
 
@@ -153,10 +150,12 @@ static void performZoomAnimation(CGRect fromFrame) {
 
 #pragma mark - Поиск иконки
 
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+
 static UIView *findIconViewForApp(NSString *bundleID) {
     if (!bundleID) return nil;
 
-    // Способ 1: через SBIconModel -> SBIconController -> viewForIcon:
     Class sbIconModelCls = objc_getClass("SBIconModel");
     Class sbIconControllerCls = objc_getClass("SBIconController");
 
@@ -193,35 +192,30 @@ static UIView *findIconViewForApp(NSString *bundleID) {
         }
     }
 
-    // Способ 2: перебор всех SBIconView на экране
+    /* Фоллбэк: сканируем все SBIconView */
     @try {
         UIWindow *keyWin = [UIApplication sharedApplication].keyWindow;
         if (!keyWin) return nil;
 
-        void (^searchInView)(UIView *, NSMutableSet *) = ^void(UIView *view, NSMutableSet *found) {
-            if ([view isKindOfClass:objc_getClass("SBIconView")]) {
-                [found addObject:view];
+        NSMutableArray *iconViews = [NSMutableArray array];
+        void (^collect)(UIView *) = ^(UIView *view) {
+            if (class_isSubclassOf(object_getClass(view), objc_getClass("SBIconView"))) {
+                [iconViews addObject:view];
             }
-            for (UIView *sub in view.subviews) {
-                searchInView(sub, found);
-            }
+            for (UIView *sub in view.subviews) collect(sub);
         };
-
-        NSMutableSet *iconViews = [NSMutableSet set];
-        searchInView(keyWin, iconViews);
+        collect(keyWin);
 
         for (UIView *iv in iconViews) {
             @try {
-                // Проверяем bundleID иконки
                 SEL iconSel = sel_registerName("icon");
                 if ([iv respondsToSelector:iconSel]) {
                     id icon = [iv performSelector:iconSel];
                     if (icon) {
                         SEL bidSel = sel_registerName("applicationBundleID");
                         NSString *bid = nil;
-                        if ([icon respondsToSelector:bidSel]) {
-                            bid = [icon performSelector:bidSel];
-                        }
+                        if ([icon respondsToSelector:bidSel])
+                            bid = (NSString *)[icon performSelector:bidSel];
                         if (bid && [bid isEqualToString:bundleID]) {
                             writeLog([NSString stringWithFormat:@"Found icon via scan: %@", bid]);
                             return iv;
@@ -238,99 +232,87 @@ static UIView *findIconViewForApp(NSString *bundleID) {
     return nil;
 }
 
-#pragma mark - Хуки (runtime swizzle)
+#pragma clang diagnostic pop
 
-// --- SBUIController activateApplication:animated: ---
-static void *orig_sbui_activateApp_anim = NULL;
-static void hooked_sbui_activateApp_anim(id self, SEL _cmd, id app, BOOL animated) {
+#pragma mark - Хуки SBUIController
+
+%hook SBUIController
+
+- (void)activateApplication:(id)application animated:(BOOL)animated {
     writeLog(@"HOOK> SBUIController activateApplication:animated:");
     NSString *bid = nil;
-    @try { if ([app respondsToSelector:@selector(bundleIdentifier)]) bid = [app bundleIdentifier]; } @catch(NSException *e) {}
-    writeLog([NSString stringWithFormat:@"  app=%@ animated=%d", bid, animated]);
+    @try {
+        if ([application respondsToSelector:@selector(bundleIdentifier)])
+            bid = [application performSelector:@selector(bundleIdentifier)];
+    } @catch (NSException *e) {}
+    writeLog([NSString stringWithFormat:@"  app=%@ anim=%d", bid, animated]);
 
     if (tweakEnabled && bid) {
         UIView *iv = findIconViewForApp(bid);
-        if (iv) {
-            performZoomAnimation(iv.frame);
-        } else {
-            performZoomAnimation(CGRectNull);
-        }
+        performZoomAnimation(iv ? iv.frame : CGRectNull);
     }
-    if (orig_sbui_activateApp_anim) CALL_ORIG_3(orig_sbui_activateApp_anim, self, app, (id)(long)animated);
+    %orig;
 }
 
-// --- SBUIController activateApplication:fromIconView: ---
-static void *orig_sbui_activate_fromIcon = NULL;
-static void hooked_sbui_activate_fromIcon(id self, SEL _cmd, id app, id iconView) {
-    writeLog(@"HOOK> SBUIController activateApplication:fromIconView:");
-    if (tweakEnabled) {
-        if (iconView && [iconView isKindOfClass:[UIView class]]) {
-            performZoomAnimation([iconView frame]);
-        } else {
-            performZoomAnimation(CGRectNull);
-        }
-    }
-    if (orig_sbui_activate_fromIcon) CALL_ORIG_3(orig_sbui_activate_fromIcon, self, app, iconView);
-}
-
-// --- SBUIController openApplication: ---
-static void *orig_sbui_openApp = NULL;
-static void hooked_sbui_openApp(id self, SEL _cmd, id app) {
+- (void)openApplication:(id)application {
     writeLog(@"HOOK> SBUIController openApplication:");
     NSString *bid = nil;
-    @try { if ([app respondsToSelector:@selector(bundleIdentifier)]) bid = [app bundleIdentifier]; } @catch(NSException *e) {}
-    if (tweakEnabled) {
+    @try {
+        if ([application respondsToSelector:@selector(bundleIdentifier)])
+            bid = [application performSelector:@selector(bundleIdentifier)];
+    } @catch (NSException *e) {}
+    writeLog([NSString stringWithFormat:@"  app=%@", bid]);
+
+    if (tweakEnabled && bid) {
         UIView *iv = findIconViewForApp(bid);
         performZoomAnimation(iv ? iv.frame : CGRectNull);
     }
-    if (orig_sbui_openApp) CALL_ORIG_2(orig_sbui_openApp, self, app);
+    %orig;
 }
 
-// --- SBApplicationIcon launch ---
-static void *orig_sbai_launch = NULL;
-static void hooked_sbai_launch(id self, SEL _cmd) {
+%end
+
+#pragma mark - Хуки SBApplicationIcon
+
+%hook SBApplicationIcon
+
+- (void)launch {
     writeLog(@"HOOK> SBApplicationIcon launch");
     NSString *bid = nil;
     @try {
         if ([self respondsToSelector:@selector(applicationBundleID)])
             bid = [self performSelector:@selector(applicationBundleID)];
-    } @catch(NSException *e) {}
+    } @catch (NSException *e) {}
     writeLog([NSString stringWithFormat:@"  icon bid=%@", bid]);
-    if (orig_sbai_launch) ((void(*)(id, SEL))orig_sbai_launch)(self, _cmd);
+    %orig;
 }
 
-// --- SBApplicationIcon launchFromLocation: ---
-static void *orig_sbai_launchFrom = NULL;
-static void hooked_sbai_launchFrom(id self, SEL _cmd, unsigned long long loc) {
-    writeLog([NSString stringWithFormat:@"HOOK> SBApplicationIcon launchFromLocation:%llu", loc]);
-    if (orig_sbai_launchFrom) CALL_ORIG_1U(orig_sbai_launchFrom, self, loc);
+- (void)launchFromLocation:(unsigned long long)location {
+    writeLog([NSString stringWithFormat:@"HOOK> SBApplicationIcon launchFromLocation:%llu", location]);
+    %orig;
 }
 
-#pragma mark - Утилиты свизлинга
+%end
 
-static void trySwizzle(Class cls, const char *selName, IMP newImp, void **origImpPtr) {
-    SEL sel = sel_registerName(selName);
-    Method m = class_getInstanceMethod(cls, sel);
-    if (!m) {
-        writeLog([NSString stringWithFormat:@"  NOT FOUND: -[%s %s]", class_getName(cls), selName]);
-        return;
-    }
-    /* Сохраняем оригинальный IMP через void* для избежания проблем с типами */
-    IMP origImp = method_getImplementation(m);
-    union { void *p; IMP i; } u; u.i = origImp;
-    *origImpPtr = u.p;
-    method_setImplementation(m, newImp);
-    writeLog([NSString stringWithFormat:@"  SWIZZLED: -[%s %s]", class_getName(cls), selName]);
+#pragma mark - Хуки SBIcon
+
+%hook SBIcon
+
+- (void)launch {
+    writeLog(@"HOOK> SBIcon launch");
+    %orig;
 }
 
-/* Макрос для вызова оригинала через void* */
-#define CALL_ORIG_2(ptr, self, a1) ((void(*)(id, SEL, id))(ptr))(self, _cmd, a1)
-#define CALL_ORIG_3(ptr, self, a1, a2) ((void(*)(id, SEL, id, id))(ptr))(self, _cmd, a1, a2)
-#define CALL_ORIG_1U(ptr, self, a1) ((void(*)(id, SEL, unsigned long long))(ptr))(self, _cmd, a1)
+- (void)activate {
+    writeLog(@"HOOK> SBIcon activate");
+    %orig;
+}
 
-#pragma mark - Дамп класса
+%end
 
-static void dumpRelevantMethods(const char *className) {
+#pragma mark - Диагностика в constructor
+
+static void dumpMethods(const char *className) {
     Class cls = objc_getClass(className);
     if (!cls) {
         writeLog([NSString stringWithFormat:@"  %s: NOT FOUND", className]);
@@ -338,30 +320,22 @@ static void dumpRelevantMethods(const char *className) {
     }
     unsigned int count = 0;
     Method *methods = class_copyMethodList(cls, &count);
-    writeLog([NSString stringWithFormat:@"  %s: %u total methods", className, count]);
-    int matched = 0;
+    writeLog([NSString stringWithFormat:@"  %s: %u methods", className, count]);
     for (unsigned int i = 0; i < count; i++) {
-        SEL sel = method_getName(methods[i]);
-        NSString *name = NSStringFromSelector(sel);
+        NSString *name = NSStringFromSelector(method_getName(methods[i]));
         if ([name containsString:@"launch"] || [name containsString:@"activate"] ||
-            [name containsString:@"openApp"] || [name containsString:@"transitionTo"] ||
-            [name containsString:@"iconView"] || [name containsString:@"fromIcon"] ||
-            [name containsString:@"startLaunch"] || [name containsString:@"handleIconTap"]) {
+            [name containsString:@"openApp"] || [name containsString:@"transition"] ||
+            [name containsString:@"fromIcon"] || [name containsString:@"iconView"]) {
             writeLog([NSString stringWithFormat:@"    - %@", name]);
-                matched++;
-            }
         }
+    }
     free(methods);
-    if (matched == 0) writeLog([NSString stringWithFormat:@"  %s: no matching methods", className]);
 }
 
-#pragma mark - Constructor
-
 %ctor {
-    // Проверка загрузки
     ensureLogDir();
     [@"" writeToFile:logFilePath() atomically:YES encoding:NSUTF8StringEncoding error:nil];
-    writeLog(@"=== iOS12Anim v6 LOADED ===");
+    writeLog(@"=== iOS12Anim v7 LOADED ===");
 
     loadPrefs();
     CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(),
@@ -369,41 +343,12 @@ static void dumpRelevantMethods(const char *className) {
         CFSTR("com.haker1928.ios12animation/settingschanged"),
         NULL, CFNotificationSuspensionBehaviorCoalesce);
 
-    // Дамп классов
     writeLog(@"--- Class dump ---");
-    dumpRelevantMethods("SBUIController");
-    dumpRelevantMethods("SBApplicationIcon");
-    dumpRelevantMethods("SBIconController");
-    dumpRelevantMethods("SBIconModel");
+    dumpMethods("SBUIController");
+    dumpMethods("SBApplicationIcon");
+    dumpMethods("SBIcon");
+    dumpMethods("SBIconController");
+    dumpMethods("SBIconModel");
     writeLog(@"--- End dump ---");
-
-    // Свизл SBUIController
-    Class sbuiCls = objc_getClass("SBUIController");
-    if (sbuiCls) {
-        writeLog(@"SBUIController found");
-        trySwizzle(sbuiCls, "activateApplication:animated:",
-                  (IMP)hooked_sbui_activateApp_anim, (void **)&orig_sbui_activateApp_anim);
-        trySwizzle(sbuiCls, "activateApplication:fromIconView:",
-                  (IMP)hooked_sbui_activate_fromIcon, (void **)&orig_sbui_activate_fromIcon);
-        trySwizzle(sbuiCls, "openApplication:",
-                  (IMP)hooked_sbui_openApp, (void **)&orig_sbui_openApp);
-    } else {
-        writeLog(@"SBUIController NOT FOUND!");
-    }
-
-    // Свизл SBApplicationIcon
-    Class sbaiCls = objc_getClass("SBApplicationIcon");
-    if (sbaiCls) {
-        writeLog(@"SBApplicationIcon found");
-        trySwizzle(sbaiCls, "launch",
-                  (IMP)hooked_sbai_launch, (void **)&orig_sbai_launch);
-        trySwizzle(sbaiCls, "launchFromLocation:",
-                  (IMP)hooked_sbai_launchFrom, (void **)&orig_sbai_launchFrom);
-    } else {
-        writeLog(@"SBApplicationIcon NOT FOUND!");
-    }
-
-    writeLog(@"=== iOS12Anim v6 READY ===");
+    writeLog(@"=== iOS12Anim v7 READY ===");
 }
-
-#pragma clang diagnostic pop
