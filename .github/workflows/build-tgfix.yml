@@ -11,68 +11,50 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: TelegramFix
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache Theos
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential curl unzip fakeroot \
+            libtinfo6 rsync git perl dpkg cmake python3
+
+      - name: Cache Theos + toolchain
+        id: cache-theos
         uses: actions/cache@v4
         with:
-          path: ~/theos
+          path: |- 
+            theos
+            ~/theos
           key: theos-ubuntu-v7
 
-      - name: Install dependencies
+      - name: Build TelegramFix
+        env:
+          THEOS: ${{ github.workspace }}/theos
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential git perl curl unzip libtinfo6 lzma-dev
-
-      - name: Setup Theos
-        run: |
-          if [ ! -d ~/theos ]; then
-            git clone --depth 1 https://github.com/theos/theos.git ~/theos
-          fi
-          export THEOS=~/theos
-          echo "THEOS=$THEOS" >> $GITHUB_ENV
-
-      - name: Install iOS SDK
-        run: |
-          mkdir -p $THEOS/sdks
-          if ls $THEOS/sdks/*.sdk 1>/dev/null 2>&1; then
-            echo "SDKs already installed from cache"
-          else
-            curl -LO https://github.com/theos/sdks/archive/master.zip
-            unzip -q master.zip
-            cp -rn sdks-master/*.sdk $THEOS/sdks/ 2>/dev/null || true
-            rm -rf sdks-master master.zip
-          fi
-          ls $THEOS/sdks/
-
-      - name: Ensure iOS Toolchain
-        run: |
-          if [ -d "$THEOS/toolchain/linux/iphone/bin" ]; then
-            echo "Toolchain found in cache"
-          else
-            echo "Toolchain NOT in cache, attempting download..."
-            curl -fSL -o /tmp/tc.tar.lzma 'https://github.com/theos/toolchain/releases/latest/download/linux-iphone-toolchain.tar.lzma' 2>/dev/null &&             mkdir -p $THEOS/toolchain/linux/iphone &&             tar --lzma -xf /tmp/tc.tar.lzma -C $THEOS/toolchain/linux/iphone &&             rm -f /tmp/tc.tar.lzma &&             echo "Toolchain installed" || echo "WARNING: Toolchain download failed, relying on cache"
-          fi
-
-      - name: Build
-        run: |
-          export PATH=$THEOS/bin:$THEOS/toolchain/linux/iphone/bin:$PATH
-          make clean 2>/dev/null || true
-          make package 2>&1 | tee ../build-tgfix.log
+          export THEOS="$THEOS"
+          export PATH="$THEOS/bin:$THEOS/toolchain/linux/iphone/bin:$PATH"
+          echo "THEOS=$THEOS"
+          echo "PATH=$PATH"
+          ls "$THEOS/bin/dm.pl" && echo "dm.pl OK" || echo "dm.pl MISSING"
+          ls "$THEOS/toolchain/linux/iphone/bin/clang++" && echo "Toolchain OK" || echo "Toolchain MISSING"
+          cd TelegramFix
+          make package FINALPACKAGE=1 2>&1 | tee ../build-tgfix.log
 
       - name: Upload .deb
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: TelegramFix-arm
           path: TelegramFix/packages/*.deb
+          retention-days: 30
 
       - name: Upload build log
-        uses: actions/upload-artifact@v4
         if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: tgfix-build-log
           path: build-tgfix.log
+          retention-days: 7
