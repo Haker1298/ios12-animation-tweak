@@ -8,8 +8,6 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      THEOS: ${{ github.workspace }}/theos
 
     steps:
       - name: Checkout repository
@@ -18,27 +16,44 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential clang lld llvm \
-            curl unzip fakeroot libtinfo6 libz3-dev \
-            rsync git perl dpkg
+          sudo apt-get install -y -qq build-essential curl unzip fakeroot \
+            libtinfo6 rsync git perl dpkg cmake python3
 
-      - name: Cache Theos
+      - name: Cache Theos + toolchain
         id: cache-theos
         uses: actions/cache@v4
         with:
-          path: theos
-          key: theos-ubuntu-v5
+          path: |-
+            theos
+            ~/theos
+          key: theos-ubuntu-v7
 
-      - name: Install Theos manually
+      - name: Install Theos + iOS toolchain
         if: steps.cache-theos.outputs.cache-hit != 'true'
+        env:
+          THEOS: ${{ github.workspace }}/theos
         run: |
-          git clone --recursive https://github.com/theos/theos.git "$THEOS"
-          # Theos нужен NIC (New Instance Creator) для шаблонов, но мы собираем вручную
-          "$THEOS/bin/swift" --version 2>/dev/null || true
-          ls "$THEOS/makefiles/"
+          export THEOS="$THEOS"
+          # Устанавливаем Theos (включая загрузку iOS тулчейна для Linux)
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
+          # Проверяем наличие тулчейна
+          echo "=== Checking toolchain ==="
+          ls "$THEOS/toolchain/linux/iphone/bin/clang++" 2>/dev/null && echo "Toolchain OK" || {
+            echo "Toolchain missing, downloading manually..."
+            mkdir -p "$THEOS/toolchain/linux/iphone"
+            curl -LO https://github.com/theos/toolchain/releases/latest/download/linux-iphone-toolchain.tar.lzma
+            tar --lzma -xf linux-iphone-toolchain.tar.lzma -C "$THEOS/toolchain/linux/iphone" --strip-components=1
+            rm -f linux-iphone-toolchain.tar.lzma
+            ls "$THEOS/toolchain/linux/iphone/bin/clang++" && echo "Manual toolchain OK"
+          }
+          echo "=== Checking SDK ==="
+          ls "$THEOS/sdks"/
 
-      - name: Download iOS SDK
+      - name: Download iOS SDK if missing
+        env:
+          THEOS: ${{ github.workspace }}/theos
         run: |
+          THEOS="$THEOS"
           SDK_DIR="$THEOS/sdks"
           mkdir -p "$SDK_DIR"
           if ! ls "$SDK_DIR"/*.sdk 1>/dev/null 2>&1; then
@@ -47,21 +62,19 @@ jobs:
             cp -R sdks-master/*.sdk "$SDK_DIR/" 2>/dev/null || true
             rm -rf sdks-master master.zip
           fi
-          echo "SDKs:"
+          echo "Available SDKs:"
           ls -1 "$SDK_DIR"/
 
-      - name: Verify Theos setup
-        run: |
-          echo "THEOS=$THEOS"
-          ls "$THEOS/makefiles/common.mk" && echo "Theos OK" || { echo "Theos MISSING"; exit 1; }
-          which clang && clang --version | head -1
-
       - name: Build tweak
+        env:
+          THEOS: ${{ github.workspace }}/theos
         run: |
+          export THEOS="$THEOS"
           export PATH="$THEOS/bin:$PATH"
-          make package FINALPACKAGE=1 2>&1 | tee build.log || true
-          echo "=== TAIL OF BUILD LOG ==="
-          tail -50 build.log
+          echo "THEOS=$THEOS"
+          ls "$THEOS/makefiles/common.mk" && echo "Makefiles OK"
+          ls "$THEOS/toolchain/linux/iphone/bin/clang++" && echo "Toolchain OK"
+          make package FINALPACKAGE=1 2>&1 | tee build.log
 
       - name: Upload .deb
         if: always()
