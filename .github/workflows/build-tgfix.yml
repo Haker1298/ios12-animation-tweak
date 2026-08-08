@@ -19,7 +19,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential curl unzip fakeroot \
-            libtinfo6 rsync git perl dpkg cmake python3
+            libtinfo6 rsync git perl dpkg cmake python3 libplist-2.0-4
 
       - name: Cache Theos + toolchain
         id: cache-theos
