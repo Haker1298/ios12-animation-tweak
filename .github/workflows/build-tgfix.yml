@@ -1,0 +1,72 @@
+name: Build Telegram Fix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'TelegramFix/**'
+      - '.github/workflows/build-tgfix.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: TelegramFix
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Theos
+        uses: actions/cache@v4
+        with:
+          path: ~/theos
+          key: theos-v2
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git perl curl unzip libtinfo6 lzma-dev
+
+      - name: Setup Theos
+        run: |
+          if [ ! -d ~/theos ]; then
+            git clone --depth 1 https://github.com/theos/theos.git ~/theos
+          fi
+          export THEOS=~/theos
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+
+      - name: Install iOS SDK
+        run: |
+          mkdir -p $THEOS/sdks
+          curl -LO https://github.com/theos/sdks/archive/master.zip
+          unzip -q master.zip
+          cp -rn sdks-master/*.sdk $THEOS/sdks/ 2>/dev/null || true
+          rm -rf sdks-master master.zip
+          ls $THEOS/sdks/
+
+      - name: Install iOS Toolchain
+        run: |
+          curl -LO https://github.com/theos/toolchain/releases/latest/download/linux-iphone-toolchain.tar.lzma
+          mkdir -p $THEOS/toolchain/linux/iphone
+          tar --lzma -xf linux-iphone-toolchain.tar.lzma -C $THEOS/toolchain/linux/iphone
+          rm -f linux-iphone-toolchain.tar.lzma
+
+      - name: Build
+        run: |
+          export PATH=$THEOS/toolchain/linux/iphone/bin:$PATH
+          make clean 2>/dev/null || true
+          make package 2>&1 | tee ../build-tgfix.log
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: TelegramFix-arm
+          path: TelegramFix/packages/*.deb
+
+      - name: Upload build log
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tgfix-build-log
+          path: build-tgfix.log
