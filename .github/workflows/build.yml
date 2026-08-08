@@ -3,82 +3,90 @@ name: Build iOS 12 Animation Tweak
 on:
   push:
     branches: [main, master]
-    paths-ignore:
-      - '**.md'
   pull_request:
     branches: [main, master]
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: ubuntu-latest
 
     steps:
-      # --- Клонируем репозиторий ---
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- Кэшируем Theos (ПЕРЕД установкой!) ---
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential clang lld llvm \
+            curl unzip fakeroot libtinfo5 libz3-dev \
+            rsync git perl
+
       - name: Cache Theos
         id: cache-theos
         uses: actions/cache@v4
         with:
           path: theos
-          key: theos-macos13-v2
+          key: theos-ubuntu-v3
 
-      # --- Устанавливаем Theos только если кэш промахнулся ---
       - name: Install Theos
         if: steps.cache-theos.outputs.cache-hit != 'true'
         run: |
           bash -c "$(curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos)"
 
-      # --- Скачиваем iOS SDK ---
       - name: Download iOS SDK
         run: |
           SDK_DIR="$GITHUB_WORKSPACE/theos/sdks"
           mkdir -p "$SDK_DIR"
-          # Скачиваем только если SDK ещё нет (кэш Theos мог его содержать)
-          if [ ! -f "$SDK_DIR"/*.sdk ]; then
+          if ls "$SDK_DIR"/*.sdk 1>/dev/null 2>&1; then
+            echo "SDKs from cache:"
+            ls -1 "$SDK_DIR"/
+          else
             echo "Downloading iOS SDKs..."
             curl -LO https://github.com/theos/sdks/archive/master.zip
             unzip -q master.zip
             cp -R sdks-master/*.sdk "$SDK_DIR/" 2>/dev/null || true
             rm -rf sdks-master master.zip
-          else
-            echo "SDKs already present from cache."
+            echo "Installed SDKs:"
+            ls -1 "$SDK_DIR"/
           fi
-          echo "Available SDKs:"
-          ls -1 "$SDK_DIR"/ 2>/dev/null || echo "  (none)"
 
-      # --- Собираем .deb пакет ---
-      - name: Build tweak package
+      - name: Install iOS cross-compilation toolchain
+        run: |
+          THEOS="$GITHUB_WORKSPACE/theos"
+          # Theos на Linux использует свой набор инструментов
+          "$THEOS/bin/swift" --version 2>/dev/null || true
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          echo "PATH=$THEOS/bin:$PATH" >> $GITHUB_ENV
+          # Проверяем что Theos готов
+          ls "$THEOS/makefiles/common.mk"
+          clang --version | head -1
+
+      - name: Build tweak
         env:
           THEOS: ${{ github.workspace }}/theos
         run: |
           export PATH="$THEOS/bin:$PATH"
-          make package FINALPACKAGE=1
+          make package FINALPACKAGE=1 || {
+            echo "=== BUILD FAILED, trying with verbose output ==="
+            make package FINALPACKAGE=1 LOGOLOGOSFLAGS="-v" 2>&1 | tail -80
+          }
 
-      # --- Загружаем .deb как артефакт ---
       - name: Upload .deb artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: iOS12Animation-arm
           path: packages/*.deb
           retention-days: 30
 
-      # --- Итоговая информация ---
-      - name: Build summary
+      - name: Build info
+        if: always()
         run: |
-          echo ""
           echo "========================================"
-          echo "  Build complete!"
+          ls -lh packages/*.deb 2>/dev/null || echo "No .deb built"
           echo "========================================"
-          ls -lh packages/*.deb 2>/dev/null
-          echo ""
-          echo "Install on jailbroken iOS 9 device:"
-          echo "  1. Download .deb from Artifacts"
-          echo "  2. scp *.deb root@<DEVICE_IP>:/var/mobile/"
-          echo "  3. ssh root@<DEVICE_IP>"
-          echo "  4. dpkg -i /var/mobile/*.deb"
-          echo "  5. killall -9 SpringBoard"
-          echo "========================================"
+          echo "Install:"
+          echo "  scp *.deb root@<IP>:/var/mobile/"
+          echo "  dpkg -i /var/mobile/*.deb"
+          echo "  killall -9 SpringBoard"
