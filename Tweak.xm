@@ -241,7 +241,7 @@ static UIView *findIconViewForApp(NSString *bundleID) {
 #pragma mark - Хуки (runtime swizzle)
 
 // --- SBUIController activateApplication:animated: ---
-static void (*orig_sbui_activateApp_anim)(id self, SEL _cmd, id app, BOOL animated);
+static void *orig_sbui_activateApp_anim = NULL;
 static void hooked_sbui_activateApp_anim(id self, SEL _cmd, id app, BOOL animated) {
     writeLog(@"HOOK> SBUIController activateApplication:animated:");
     NSString *bid = nil;
@@ -256,11 +256,11 @@ static void hooked_sbui_activateApp_anim(id self, SEL _cmd, id app, BOOL animate
             performZoomAnimation(CGRectNull);
         }
     }
-    orig_sbui_activateApp_anim(self, _cmd, app, animated);
+    if (orig_sbui_activateApp_anim) CALL_ORIG_3(orig_sbui_activateApp_anim, self, app, (id)(long)animated);
 }
 
 // --- SBUIController activateApplication:fromIconView: ---
-static void (*orig_sbui_activate_fromIcon)(id self, SEL _cmd, id app, id iconView);
+static void *orig_sbui_activate_fromIcon = NULL;
 static void hooked_sbui_activate_fromIcon(id self, SEL _cmd, id app, id iconView) {
     writeLog(@"HOOK> SBUIController activateApplication:fromIconView:");
     if (tweakEnabled) {
@@ -270,11 +270,11 @@ static void hooked_sbui_activate_fromIcon(id self, SEL _cmd, id app, id iconView
             performZoomAnimation(CGRectNull);
         }
     }
-    orig_sbui_activate_fromIcon(self, _cmd, app, iconView);
+    if (orig_sbui_activate_fromIcon) CALL_ORIG_3(orig_sbui_activate_fromIcon, self, app, iconView);
 }
 
 // --- SBUIController openApplication: ---
-static void (*orig_sbui_openApp)(id self, SEL _cmd, id app);
+static void *orig_sbui_openApp = NULL;
 static void hooked_sbui_openApp(id self, SEL _cmd, id app) {
     writeLog(@"HOOK> SBUIController openApplication:");
     NSString *bid = nil;
@@ -283,11 +283,11 @@ static void hooked_sbui_openApp(id self, SEL _cmd, id app) {
         UIView *iv = findIconViewForApp(bid);
         performZoomAnimation(iv ? iv.frame : CGRectNull);
     }
-    orig_sbui_openApp(self, _cmd, app);
+    if (orig_sbui_openApp) CALL_ORIG_2(orig_sbui_openApp, self, app);
 }
 
 // --- SBApplicationIcon launch ---
-static void (*orig_sbai_launch)(id self, SEL _cmd);
+static void *orig_sbai_launch = NULL;
 static void hooked_sbai_launch(id self, SEL _cmd) {
     writeLog(@"HOOK> SBApplicationIcon launch");
     NSString *bid = nil;
@@ -296,36 +296,37 @@ static void hooked_sbai_launch(id self, SEL _cmd) {
             bid = [self performSelector:@selector(applicationBundleID)];
     } @catch(NSException *e) {}
     writeLog([NSString stringWithFormat:@"  icon bid=%@", bid]);
-
-    if (tweakEnabled && bid) {
-        // Даём оригинальному методу запуститься, анимация через другой хук
-    }
-    orig_sbai_launch(self, _cmd);
+    if (orig_sbai_launch) ((void(*)(id, SEL))orig_sbai_launch)(self, _cmd);
 }
 
 // --- SBApplicationIcon launchFromLocation: ---
-static void (*orig_sbai_launchFrom)(id self, SEL _cmd, unsigned long long loc);
+static void *orig_sbai_launchFrom = NULL;
 static void hooked_sbai_launchFrom(id self, SEL _cmd, unsigned long long loc) {
     writeLog([NSString stringWithFormat:@"HOOK> SBApplicationIcon launchFromLocation:%llu", loc]);
-    orig_sbai_launchFrom(self, _cmd, loc);
+    if (orig_sbai_launchFrom) CALL_ORIG_1U(orig_sbai_launchFrom, self, loc);
 }
 
 #pragma mark - Утилиты свизлинга
 
-typedef union { void *p; IMP i; } imp_cast;
-
-static void trySwizzle(Class cls, const char *selName, IMP newImp, IMP *origImpPtr) {
+static void trySwizzle(Class cls, const char *selName, IMP newImp, void **origImpPtr) {
     SEL sel = sel_registerName(selName);
     Method m = class_getInstanceMethod(cls, sel);
     if (!m) {
         writeLog([NSString stringWithFormat:@"  NOT FOUND: -[%s %s]", class_getName(cls), selName]);
         return;
     }
-    imp_cast ic; ic.i = method_getImplementation(m);
-    *origImpPtr = ic.i;
+    /* Сохраняем оригинальный IMP через void* для избежания проблем с типами */
+    IMP origImp = method_getImplementation(m);
+    union { void *p; IMP i; } u; u.i = origImp;
+    *origImpPtr = u.p;
     method_setImplementation(m, newImp);
     writeLog([NSString stringWithFormat:@"  SWIZZLED: -[%s %s]", class_getName(cls), selName]);
 }
+
+/* Макрос для вызова оригинала через void* */
+#define CALL_ORIG_2(ptr, self, a1) ((void(*)(id, SEL, id))(ptr))(self, _cmd, a1)
+#define CALL_ORIG_3(ptr, self, a1, a2) ((void(*)(id, SEL, id, id))(ptr))(self, _cmd, a1, a2)
+#define CALL_ORIG_1U(ptr, self, a1) ((void(*)(id, SEL, unsigned long long))(ptr))(self, _cmd, a1)
 
 #pragma mark - Дамп класса
 
@@ -381,11 +382,11 @@ static void dumpRelevantMethods(const char *className) {
     if (sbuiCls) {
         writeLog(@"SBUIController found");
         trySwizzle(sbuiCls, "activateApplication:animated:",
-                  (IMP)hooked_sbui_activateApp_anim, &orig_sbui_activateApp_anim);
+                  (IMP)hooked_sbui_activateApp_anim, (void **)&orig_sbui_activateApp_anim);
         trySwizzle(sbuiCls, "activateApplication:fromIconView:",
-                  (IMP)hooked_sbui_activate_fromIcon, &orig_sbui_activate_fromIcon);
+                  (IMP)hooked_sbui_activate_fromIcon, (void **)&orig_sbui_activate_fromIcon);
         trySwizzle(sbuiCls, "openApplication:",
-                  (IMP)hooked_sbui_openApp, &orig_sbui_openApp);
+                  (IMP)hooked_sbui_openApp, (void **)&orig_sbui_openApp);
     } else {
         writeLog(@"SBUIController NOT FOUND!");
     }
@@ -395,9 +396,9 @@ static void dumpRelevantMethods(const char *className) {
     if (sbaiCls) {
         writeLog(@"SBApplicationIcon found");
         trySwizzle(sbaiCls, "launch",
-                  (IMP)hooked_sbai_launch, &orig_sbai_launch);
+                  (IMP)hooked_sbai_launch, (void **)&orig_sbai_launch);
         trySwizzle(sbaiCls, "launchFromLocation:",
-                  (IMP)hooked_sbai_launchFrom, &orig_sbai_launchFrom);
+                  (IMP)hooked_sbai_launchFrom, (void **)&orig_sbai_launchFrom);
     } else {
         writeLog(@"SBApplicationIcon NOT FOUND!");
     }
