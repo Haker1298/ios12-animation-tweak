@@ -121,7 +121,7 @@ static void doAnimation(CGRect fromFrame) {
         NSString *bid = nil;
 
         @try {
-            bid = [self valueForKey:@"applicationBundleID"];
+            bid = [(id)self valueForKey:@"applicationBundleID"];
         } @catch(NSException *e) {}
 
         if (bid) {
