@@ -1,0 +1,24 @@
+# Theos
+theos/
+packages/
+.obj/
+*.deb
+
+# macOS / Xcode
+.DS_Store
+*.xcworkspace
+*.xcodeproj
+xcuserdata/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Misc
+*.log
+*.dSYM/
+
+# Preference bundle (если добавишь свой)
+*.bundle

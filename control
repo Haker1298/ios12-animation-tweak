@@ -1,0 +1,9 @@
+Package: com.yourname.ios12animation
+Name: iOS 12 Animation
+Depends: mobilesubstrate, firmware (>= 9.0)
+Version: 1.0.0
+Architecture: iphoneos-arm
+Description: Добавляет плавную анимацию открытия приложений в стиле iOS 12+ на iOS 9. Иконка плавно увеличивается из своей позиции на рабочем столе, создавая эффект непрерывного перехода.
+Maintainer: YourName
+Author: YourName
+Section: Tweaks

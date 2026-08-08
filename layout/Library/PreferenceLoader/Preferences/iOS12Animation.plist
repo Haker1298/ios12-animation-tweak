@@ -1,0 +1,64 @@
+{
+    Entry = {
+        Cell = PSLinkCell;
+        Title = "iOS 12 Animation";
+        Icon = "/Library/PreferenceBundles/iOS12Animation.bundle/icon.png";
+    };
+    Items = (
+        {
+            Cell = PSSwitchCell;
+            Defaults = "com.yourname.ios12animation";
+            Key = Enabled;
+            Title = "Включить твик";
+            Default = YES;
+            PostNotification = "com.yourname.ios12animation/settingschanged";
+        },
+        {
+            Cell = PSSliderCell;
+            Defaults = "com.yourname.ios12animation";
+            Key = Duration;
+            Title = "Длительность анимации";
+            Default = 0.55;
+            Min = 0.3;
+            Max = 1.0;
+            ShowValue = YES;
+            PostNotification = "com.yourname.ios12animation/settingschanged";
+        },
+        {
+            Cell = PSSliderCell;
+            Defaults = "com.yourname.ios12animation";
+            Key = DampingRatio;
+            Title = "Упругость (damping)";
+            Default = 0.86;
+            Min = 0.5;
+            Max = 1.0;
+            ShowValue = YES;
+            PostNotification = "com.yourname.ios12animation/settingschanged";
+        },
+        {
+            Cell = PSSliderCell;
+            Defaults = "com.yourname.ios12animation";
+            Key = InitialVelocity;
+            Title = "Начальная скорость";
+            Default = 0.0;
+            Min = 0.0;
+            Max = 5.0;
+            ShowValue = YES;
+            PostNotification = "com.yourname.ios12animation/settingschanged";
+        },
+        {
+            Cell = PSSegmentCell;
+            Defaults = "com.yourname.ios12animation";
+            Key = AnimationStyle;
+            Title = "Стиль анимации";
+            Default = 0;
+            Titles = (
+                "Zoom",
+                "Zoom + Blur",
+                "Zoom + Fade"
+            );
+            Values = (0, 1, 2);
+            PostNotification = "com.yourname.ios12animation/settingschanged";
+        }
+    );
+}
