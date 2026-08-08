@@ -1,41 +1,76 @@
-{
-    Entry = {
-        Cell = PSLinkCell;
-        Title = "Анимация iOS 12";
-    };
-    Items = (
-        {
-            Cell = PSSwitchCell;
-            Defaults = "com.haker1928.ios12animation";
-            Key = Enabled;
-            Title = "Включить";
-            Default = YES;
-            PostNotification = "com.haker1928.ios12animation/settingschanged";
-        },
-        {
-            Cell = PSSliderCell;
-            Defaults = "com.haker1928.ios12animation";
-            Key = Duration;
-            Title = "Скорость анимации";
-            Default = 0.5;
-            Min = 0.25;
-            Max = 1.0;
-            ShowValue = YES;
-            PostNotification = "com.haker1928.ios12animation/settingschanged";
-        },
-        {
-            Cell = PSSegmentCell;
-            Defaults = "com.haker1928.ios12animation";
-            Key = AnimationStyle;
-            Title = "Стиль анимации";
-            Default = 0;
-            Titles = (
-                "Масштаб",
-                "Масштаб + Размытие",
-                "Масштаб + Затемнение"
-            );
-            Values = (0, 1, 2);
-            PostNotification = "com.haker1928.ios12animation/settingschanged";
-        }
-    );
-}
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>entry</key>
+    <dict>
+        <key>cell</key>
+        <string>PSLinkCell</string>
+        <key>label</key>
+        <string>Анимация iOS 12</string>
+    </dict>
+    <key>items</key>
+    <array>
+        <dict>
+            <key>cell</key>
+            <string>PSSwitchCell</string>
+            <key>defaults</key>
+            <string>com.haker1928.ios12animation</string>
+            <key>key</key>
+            <string>Enabled</string>
+            <key>label</key>
+            <string>Включить</string>
+            <key>default</key>
+            <true/>
+            <key>PostNotification</key>
+            <string>com.haker1928.ios12animation/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSliderCell</string>
+            <key>defaults</key>
+            <string>com.haker1928.ios12animation</string>
+            <key>key</key>
+            <string>Duration</string>
+            <key>label</key>
+            <string>Скорость анимации</string>
+            <key>default</key>
+            <real>0.5</real>
+            <key>min</key>
+            <real>0.25</real>
+            <key>max</key>
+            <real>1.0</real>
+            <key>showValue</key>
+            <true/>
+            <key>PostNotification</key>
+            <string>com.haker1928.ios12animation/settingschanged</string>
+        </dict>
+        <dict>
+            <key>cell</key>
+            <string>PSSegmentCell</string>
+            <key>defaults</key>
+            <string>com.haker1928.ios12animation</string>
+            <key>key</key>
+            <string>AnimationStyle</string>
+            <key>label</key>
+            <string>Стиль анимации</string>
+            <key>default</key>
+            <integer>0</integer>
+            <key>titles</key>
+            <array>
+                <string>Масштаб</string>
+                <string>Масштаб + Размытие</string>
+                <string>Масштаб + Затемнение</string>
+            </array>
+            <key>values</key>
+            <array>
+                <integer>0</integer>
+                <integer>1</integer>
+                <integer>2</integer>
+            </array>
+            <key>PostNotification</key>
+            <string>com.haker1928.ios12animation/settingschanged</string>
+        </dict>
+    </array>
+</dict>
+</plist>
